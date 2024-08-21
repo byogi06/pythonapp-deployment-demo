@@ -1,0 +1,11 @@
+version: "3"
+
+services:
+  webapp:
+    build: ./src
+    image: python-demo-img
+    command: bash -c "python manage.py runserver 0.0.0.0:8000"
+    container_name: python-demo-app
+    restart: always
+    ports:
+      - "8000:8000"

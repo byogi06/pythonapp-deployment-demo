@@ -1,0 +1,127 @@
+# This file is a template, and might need editing before it works on your project.
+# Full project: https://gitlab.com/pages/plain-html
+
+stages:
+  - setup
+  - create_eks
+  - deploy_jenkins
+
+default:
+  image: python:3.9
+
+variables:
+  VPC_STACK_NAME: allianz-demo-eks-vpc-stack
+  CLUSTER_NAME: allianz-demo-eks-cluster
+  CLUSTER_NODE_GROUP_NAME: allianz-demo-eks-cluster-group
+  AWS_ACCOUNT_ID: 233527318971
+
+before_script:
+  - apt update -y
+  - apt install sudo
+  - curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+  - unzip awscliv2.zip
+  - sudo ./aws/install
+  - aws --version
+  - mkdir -p app
+  - echo "Installing helm"
+  - curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  - helm version
+  - echo "Installing kubectl"
+  - curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+  - chmod +x kubectl
+  - mv kubectl /usr/local/bin/kubectl
+  - kubectl version --client
+
+setup:
+  stage: setup
+  script:
+    - | 
+      if aws cloudformation describe-stacks --stack-name $VPC_STACK_NAME >/dev/null 2>&1; then
+        echo "VPC stack $VPC_STACK_NAME already exists, skipping creation."
+      else
+        echo "Creating VPC stack..."
+        aws cloudformation create-stack --stack-name $VPC_STACK_NAME --template-url https://amazon-eks.s3.us-west-2.amazonaws.com/cloudformation/2020-10-29/amazon-eks-vpc-sample.yaml
+        echo "Waiting for VPC stack creation..."
+        aws cloudformation wait stack-create-complete --stack-name $VPC_STACK_NAME
+      fi
+
+create_eks:
+  stage: create_eks
+  script:
+    - |
+      if aws iam get-role --role-name allianz-demo-eks-cluster-role >/dev/null 2>&1; then
+        echo "IAM role allianz-demo-eks-cluster-role already exists, skipping creation."
+      else
+        echo "Creating IAM role for EKS..."
+        aws iam create-role \
+          --role-name allianz-demo-eks-cluster-role \
+          --assume-role-policy-document '{
+          "Version": "2012-10-17",
+          "Statement": [{
+            "Effect": "Allow",
+            "Principal": { "Service": "eks.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          },
+          {
+            "Effect": "Allow",
+            "Principal": { "Service": "ec2.amazonaws.com" },
+            "Action": "sts:AssumeRole"
+          }]
+        }'
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+        aws iam attach-role-policy --role-name allianz-demo-eks-cluster-role --policy-arn arn:aws:iam::aws:policy/AmazonEC2FullAccess
+      fi
+
+    - |
+      if aws eks describe-cluster --name $CLUSTER_NAME >/dev/null 2>&1; then
+        echo "EKS cluster $CLUSTER_NAME already exists, skipping creation."
+      else
+        echo "Creating EKS cluster..."
+        aws eks create-cluster --name $CLUSTER_NAME --role-arn arn:aws:iam::$AWS_ACCOUNT_ID:role/allianz-demo-eks-cluster-role --resources-vpc-config subnetIds=$(aws cloudformation describe-stacks --stack-name $VPC_STACK_NAME --query "Stacks[0].Outputs[?OutputKey=='SubnetIds'].OutputValue" --output text),securityGroupIds=$(aws cloudformation describe-stacks --stack-name $VPC_STACK_NAME --query "Stacks[0].Outputs[?OutputKey=='SecurityGroups'].OutputValue" --output text)
+        echo "Waiting for EKS cluster creation..."
+        aws eks wait cluster-active --name $CLUSTER_NAME
+        echo "Creating Node Group..."
+        SUBNET_IDS=$(aws cloudformation describe-stacks --stack-name $VPC_STACK_NAME --query "Stacks[0].Outputs[?OutputKey=='SubnetIds'].OutputValue" --output text | tr -d '[]"\n ' | tr ',' ' ')
+        echo $SUBNET_IDS
+        aws eks create-nodegroup --cluster-name $CLUSTER_NAME --nodegroup-name $CLUSTER_NODE_GROUP_NAME --disk-size 20 --instance-types t3.small --scaling-config minSize=1,maxSize=1,desiredSize=1 --subnets $SUBNET_IDS --node-role arn:aws:iam::$AWS_ACCOUNT_ID:role/allianz-demo-eks-cluster-role
+        echo "Waiting for Node Group to become active..."
+        aws eks wait nodegroup-active --cluster-name $CLUSTER_NAME --nodegroup-name $CLUSTER_NODE_GROUP_NAME
+      fi
+
+deploy_jenkins:
+  stage: deploy_jenkins
+  script:
+    - echo "Deploying Jenkins on EKS cluster"    
+   # Update kubeconfig to use the specified EKS cluster
+    - aws eks update-kubeconfig --name $CLUSTER_NAME
+    # Install Jenkins using Helm
+    - kubectl create namespace jenkins
+    - helm repo add jenkins https://charts.jenkins.io
+    - helm repo update
+    - helm install jenkins jenkins/jenkins --namespace jenkins --set controller.serviceType=LoadBalancer
+    
+    # Install Snapshot Controller and CRDs
+    - kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v6.0.1/client/config/crd/snapshot.storage.k8s.io_volumesnapshotclasses.yaml
+    - kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v6.0.1/client/config/crd/snapshot.storage.k8s.io_volumesnapshotcontents.yaml
+    - kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v6.0.1/client/config/crd/snapshot.storage.k8s.io_volumesnapshots.yaml
+    
+    #Deploy the Snapshot Controller
+    - kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v6.0.1/deploy/kubernetes/snapshot-controller/rbac-snapshot-controller.yaml
+    - kubectl apply -f https://raw.githubusercontent.com/kubernetes-csi/external-snapshotter/v6.0.1/deploy/kubernetes/snapshot-controller/setup-snapshot-controller.yaml
+
+   
+    - # Get Jenkins admin password
+    - echo "Jenkins admin password:"
+    - kubectl exec jenkins-0 -n jenkins -it -c jenkins -- cat /run/secrets/additional/chart-admin-password && echo 
+
+    # Get the instance id and replace in below command
+    #- aws ec2 modify-instance-metadata-options --instance-id i-0861ccd5664f4c837 --http-tokens optional
+    # Delete current PVC and create new one but replace the volume id in pv_conf.yaml
+    #- kubectl delete pvc jenkins --namespace jenkins
+    #- kubectl apply -f pv_conf.yaml
+    #- kubectl apply -f pvc_conf.yaml
+
