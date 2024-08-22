@@ -4,7 +4,7 @@
 - Using your own laptop or one of the Cloud Providers, deploy a Kubernetes Cluster (e.g. minikube, kind, EKS, AKS, GKE, etc...)               
 - Deploy Jenkins (or a similar tool) on Kubernetes and demonstrate a blue green deployment of an application example (ex: nodejs dummy app).   
 
-**solution :**
+**Solution :**
 To setup the environment, tried below two approaches. 
 1. Implemention using AWS cloud
 2. Implemnetion on laptop using docker desktop
