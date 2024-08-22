@@ -36,7 +36,7 @@ After getting jenkins admin password from pipeline, you can to login to the jenk
 
 - Deploing the application using Jenkins:
 
-  Created the sample freestyle pipeline to build and push the docker image of python django application present in /src/* of this repository. Even after installing docker plugins, it fails due to missing docker in jenkins.
+  Created the sample freestyle pipeline to build and push the docker image using 'Dockerfile' of python django application present in /src/* of this repository. Even after installing docker plugins, it fails due to missing docker in jenkins. Hence could not proceed further.
 
 - Deploing the application using Gitlab pipeline:
   
