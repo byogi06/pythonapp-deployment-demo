@@ -1,0 +1,26 @@
+pipeline {
+    agent any
+    stages {
+        stage('Build') {
+            steps {
+                sh '-t byogi06/python-demo-app:green .'
+            }
+        }
+        stage('Deploy to Green') {
+            steps {
+                script {
+                    sh 'kubectl set image deployment/python-demo-app python-demo-app=python-demo-django-app:green --namespace=production'
+                }
+            }
+        }
+        stage('Switch Traffic to Green') {
+            steps {
+                script {
+                    sh 'kubectl rollout status deployment/python-demo-app --namespace=production'
+                    // Here you might switch a service from blue to green
+                    sh 'kubectl patch service python-demo-app -p \'{"spec":{"selector":{"version":"green"}}}\' --namespace=production'
+                }
+            }
+        }
+    }
+}
