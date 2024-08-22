@@ -27,7 +27,7 @@ Pipeline works fine as expected, It creates VPC, subnets, security groups, clust
 In this approach, you can install the docker desktop on the laptop. As docker Desktop includes a standalone Kubernetes server and client, as well as Docker CLI integration that runs on your machine. 
 Once docker desktop is installed, enable the kubernetes option to run the Kubernetes server and client.
 
-Furter tasks are automated in gitlab pipeline as below.
+Furter tasks are automated in gitlab pipeline (.gitlab-ci.yml) as below. (Please note that .gitlab-ci-aws.yml gitlab pipeline is only for approach 1 )
 - setup - It just checks docker desktop is running or not. 
 - deploy_jenkins - It deploys jenkins using 'helm'.
 
