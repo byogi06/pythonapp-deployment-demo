@@ -1,0 +1,55 @@
+stages:
+  - setup
+# - build
+  - deploy_jenkins
+
+variables:
+  DOCKER_CLI: 'C:\Program Files\Docker\Docker\Docker Desktop.exe'
+  DOCKER_DESKTOP_SERVICE: 'com.docker.service'
+
+# Check if Docker is installed and running
+check_docker:
+  stage: setup
+  script:
+    - |
+      $dockerStatus = Get-Service -Name $DOCKER_DESKTOP_SERVICE
+      if ($dockerStatus.Status -ne 'Running') {
+          Write-Host "Docker Desktop is not running. Starting the service..."
+          Start-Service -Name $DOCKER_DESKTOP_SERVICE
+          #Start-Process -FilePath "$DOCKER_CLI"
+          Start-Sleep -Seconds 100
+      }
+      & "$env:DOCKER_CLI" version
+  tags:
+    - windows
+
+# Test weather we can build and push image to dockerhub, we can successfully build and push images to dockerhub
+#build_app:
+#  stage: build
+#  script:
+#    - |
+#      & cd src
+#      & docker build -t byogi06/python-demo-app:latest .
+#      & docker login -u "$DOCKER_USERNAME" -p "$DOCKER_PASSWORD"
+#      & docker push byogi06/python-demo-app:latest
+#  tags:
+#    - windows
+
+deploy_jenkins:
+  stage: deploy_jenkins
+  script:
+    - |
+      & helm repo add jenkinsci https://charts.jenkins.io
+      & helm repo update
+      & helm search repo jenkinsci
+      
+      #Install the jenkins
+      & helm install jenkins -n jenkins jenkinsci/jenkins
+
+      #Get the jenkins URL
+      & kubectl --namespace jenkins port-forward svc/jenkins 8080:8080
+    
+      #Get the jenkins admin password
+      & kubectl exec jenkins-0 -n jenkins -it -c jenkins -- cat /run/secrets/additional/chart-admin-password && echo 
+  tags:
+    - windows
